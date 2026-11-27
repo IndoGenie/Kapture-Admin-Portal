@@ -3,8 +3,7 @@ name: Build Kapture Admin Portal SPFx Package
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -13,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
 
     steps:
       - name: Checkout repository
@@ -26,12 +25,10 @@ jobs:
 
       - name: Verify project files
         run: |
-          echo "Checking Admin Portal project files..."
           test -f package.json
           test -f gulpfile.js
           test -d src
           test -d config
-          echo "Project structure verified."
 
       - name: Install dependencies
         run: npm install --no-audit --no-fund
@@ -43,9 +40,7 @@ jobs:
           npx gulp package-solution --ship
 
       - name: Verify package
-        run: |
-          test -s sharepoint/solution/kapture-admin-portal.sppkg
-          echo "SPFx package generated successfully."
+        run: test -s sharepoint/solution/kapture-admin-portal.sppkg
 
       - name: Upload SPFx package
         uses: actions/upload-artifact@v4
