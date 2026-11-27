@@ -1,27 +1,54 @@
+
 name: Build Kapture Admin Portal SPFx Package
+
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   workflow_dispatch:
+
 permissions:
   contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: '18.19.0'
-          cache: npm
+
+      - name: Verify project files
+        run: |
+          echo "Checking Admin Portal project files..."
+          test -f package.json
+          test -f gulpfile.js
+          test -d src
+          test -d config
+          echo "Project structure verified."
+
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+
       - name: Build and package
-        run: npx gulp clean && npx gulp bundle --ship && npx gulp package-solution --ship
+        run: |
+          npx gulp clean
+          npx gulp bundle --ship
+          npx gulp package-solution --ship
+
       - name: Verify package
-        run: test -s sharepoint/solution/kapture-admin-portal.sppkg
-      - uses: actions/upload-artifact@v4
+        run: |
+          test -s sharepoint/solution/kapture-admin-portal.sppkg
+          echo "SPFx package generated successfully."
+
+      - name: Upload SPFx package
+        uses: actions/upload-artifact@v4
         with:
           name: kapture-admin-portal-sppkg
           path: sharepoint/solution/kapture-admin-portal.sppkg
