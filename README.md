@@ -1,29 +1,36 @@
-# Kapture Admin Portal – SPFx source (v0.1.1)
+# Kapture Admin Portal — v0.2.0
 
-A separate SPFx web part for an administrator-only page on the existing Kapture SharePoint site. It uses the same SharePoint site and existing tenant App Catalog as the Employee Wiki.
+SPFx web part for the existing Kapture SharePoint site. This release adds the Indovance department structure, Operations sub-departments, category/description/tags capture, automatic folder routing, metadata writing, video file selection, repository search and a redesigned responsive interface.
 
-## Architecture
-- Existing site: `https://teknovance.sharepoint.com/sites/Kapture`
-- New modern page: `SitePages/Kapture-Admin.aspx` (Ajit creates the page)
-- One document library: `Kapture Knowledge Repository`
-- No Incoming/Published folders and no separate Knowledge Catalogue List in this initial version.
-- Admin Portal uploads directly to the library root. Employee Wiki will be configured separately to read from the same library.
+## Repository target
 
-## SharePoint setup
-1. Create the `Kapture Knowledge Repository` document library on the existing Kapture site.
-2. Give the administrator group Edit/Contribute permissions and employees Read permissions.
-3. Restrict the `Kapture-Admin.aspx` page to the authorised administrator group.
-4. Confirm the library server-relative URL with the developer. The default configured path is `/sites/Kapture/Shared Documents/Kapture Knowledge Repository`; it can be changed in the web-part property pane.
-5. Deploy this package through the existing tenant App Catalog, then add the Kapture Admin Portal web part to the new page. No new site or App Catalog is required.
+Default server-relative path:
+
+`/sites/Kapture/Shared Documents/Kapture Knowledge Repository`
+
+The application creates missing department folders on upload. Operations documents are stored under `Operations/<Sub-department>`; other departments are stored under `<Department>`. Categories are metadata, not folders.
+
+## SharePoint prerequisites and important notes
+
+- The signed-in uploader needs permission to add files and create folders in the repository.
+- The implementation currently targets the standard SharePoint library title `Documents` (URL segment `Shared Documents`). Confirm this title in Site contents if the tenant has renamed the library.
+- On the first upload, the app attempts to create five text metadata columns on the Documents library: Kapture Department, Kapture Sub-department, Kapture Category, Kapture Description and Kapture Tags. The uploader must have permission to add library columns. If the tenant does not allow this, a SharePoint administrator should create those columns with the same internal names before testing.
+- The repository document list reads file items from the Documents library and filters them to the configured repository path.
+- The Employee Wiki must separately be configured to read from this same repository path. This package does not modify the Employee Wiki.
+- Video selection is enabled for common formats. Playback/preview behaviour in the Employee Wiki depends on its own implementation and SharePoint media support.
+- Access control is enforced by SharePoint permissions, not by hiding the page or web part.
 
 ## Build
-Requires Node.js 18.19.0 and SPFx 1.20.0 dependencies. Run `npm install`, `gulp clean`, `gulp bundle --ship`, `gulp package-solution --ship`. Output: `sharepoint/solution/kapture-admin-portal.sppkg`.
 
-## Security
-The UI is not a security boundary. Enforce access through SharePoint permissions. Administrators need edit permission on the document library; employees should have read-only access. SPFx REST requests run as the signed-in user.
+Use Node.js 18.19.0. From the project root:
 
-## Scope limits
-This starter uploads files directly to the shared library and lists the files in its root. It does not yet implement document extraction, metadata columns, versioned article generation, or advanced management workflows.
+```bash
+npm install --no-audit --no-fund
+npx gulp clean
+npx gulp bundle --ship
+npx gulp package-solution --ship
+```
 
-## GitHub Actions setup
-Create a separate GitHub repository for this Admin Portal (recommended, so its workflow cannot interfere with the Employee Wiki build). Extract this ZIP and upload the **contents inside the `Kapture-Admin-Portal` folder** to the root of that repository, including the `.github` folder. Push to `main` or run the workflow manually. Download the `kapture-admin-portal-sppkg` artifact from the successful workflow run and give that `.sppkg` to Ajit.
+Package output: `sharepoint/solution/kapture-admin-portal.sppkg`.
+
+The GitHub Actions workflow builds and uploads this package as an artifact. This source ZIP has not been tenant-deployed or live-tested; test first with a non-sensitive sample file and verify its folder and metadata in SharePoint.

@@ -1,1 +1,14 @@
-{ "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/package-solution.schema.json", "solution": { "name": "kapture-admin-portal-client-side-solution", "id": "b8c4e0a7-7b3f-4a8d-9e12-6f1a2c8d9e41", "version": "0.1.1.0", "includeClientSideAssets": true, "skipFeatureDeployment": false, "isDomainIsolated": false }, "paths": { "zippedPackage": "solution/kapture-admin-portal.sppkg" } }
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/spfx-build/package-solution.schema.json",
+  "solution": {
+    "name": "kapture-admin-portal-client-side-solution",
+    "id": "b8c4e0a7-7b3f-4a8d-9e12-6f1a2c8d9e41",
+    "version": "0.2.0.0",
+    "includeClientSideAssets": true,
+    "skipFeatureDeployment": false,
+    "isDomainIsolated": false
+  },
+  "paths": {
+    "zippedPackage": "solution/kapture-admin-portal.sppkg"
+  }
+}
