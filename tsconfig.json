@@ -1,8 +1,8 @@
 
 {
+  "extends": "./node_modules/@microsoft/sp-build-web/tsconfig.json",
   "compilerOptions": {
     "target": "es5",
-    "lib": ["es2015", "dom"],
     "forceConsistentCasingInFileNames": true,
     "module": "commonjs",
     "jsx": "react",
@@ -11,12 +11,16 @@
     "experimentalDecorators": true,
     "skipLibCheck": true,
     "outDir": "lib",
-    "noImplicitAny": true,
+    "inlineSources": false,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "allowSyntheticDefaultImports": true,
-    "esModuleInterop": true,
-    "types": ["webpack-env"]
+    "noImplicitAny": true,
+    "types": [
+      "webpack-env"
+    ]
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"]
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx"
+  ]
 }
