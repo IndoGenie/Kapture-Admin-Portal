@@ -6,16 +6,17 @@ import styles from './KaptureAdmin.module.scss';
 const DEPARTMENTS: string[] = ['HR', 'Finance', 'Marketing', 'Sales', 'Training and Development', 'IT', 'BES', 'AI', 'Technology', 'Operations'];
 const OPERATIONS: string[] = ['Land Survey', 'Land Development', 'Structural', 'Visual Engineering', 'Mechanical', 'Building Services', 'Construction Engineering', 'Water and Drainage', 'Energy and Utilities', 'Heavy Civil and Infra'];
 const CATEGORIES: string[] = ['SOP', 'Policy', 'Standards', 'Training Material', 'Video & Recorded Sessions', 'Work Instructions', 'Guidelines', 'Templates & Forms', 'Project Reference', 'Technical Documentation', 'Other'];
+const TAG_OPTIONS: string[] = ['Process', 'Project', 'Client', 'Internal', 'Reference', 'Checklist', 'Guide', 'Template', 'CAD', 'BIM', 'Revit', 'AutoCAD', 'Structural', 'Mechanical', 'Quality', 'Delivery', 'Onboarding', 'Training', 'Best Practice', 'Lessons Learned', 'Troubleshooting', 'Safety', 'Compliance', 'Design', 'Engineering'];
 
 interface IState {
   files: IKnowledgeFile[]; loading: boolean; uploading: boolean; message: string; error: string;
-  selectedFile?: File; department: string; subDepartment: string; category: string; description: string; tags: string; search: string;
+  selectedFile?: File; department: string; subDepartment: string; category: string; description: string; tags: string[]; search: string;
 }
 
 export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IState> {
   constructor(props: IKaptureAdminProps) {
     super(props);
-    this.state = { files: [], loading: true, uploading: false, message: '', error: '', department: '', subDepartment: '', category: '', description: '', tags: '', search: '' };
+    this.state = { files: [], loading: true, uploading: false, message: '', error: '', department: '', subDepartment: '', category: '', description: '', tags: [], search: '' };
   }
   public componentDidMount(): void { this.loadFiles(); }
   private api = (path: string): string => `${this.props.siteUrl}/_api${path}`;
@@ -63,10 +64,17 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     this.setState({ loading: true, error: '' });
     try {
       const root = this.props.repositoryFolder.replace(/'/g, "''");
-      const response = await this.request(this.api(`/web/lists/getbytitle('Documents')/items?$select=File/Name,File/ServerRelativeUrl,File/Length,Modified&$expand=File&$filter=FSObjType eq 0&$orderby=Modified desc&$top=500`), 'GET');
-      if (!response.ok) throw new Error(`Could not access repository documents (${response.status}). Confirm the Documents library and your SharePoint permissions.`);
-      const data = await response.json();
-      const files: IKnowledgeFile[] = (data.value || []).map((item: any) => ({ Name: item.File.Name, ServerRelativeUrl: item.File.ServerRelativeUrl, Length: String(item.File.Length || 0), TimeLastModified: item.Modified })).filter((file: IKnowledgeFile) => file.ServerRelativeUrl && file.ServerRelativeUrl.indexOf(root) === 0);
+      await this.ensureMetadataFields();
+      let nextUrl: string | undefined = this.api(`/web/lists/getbytitle('Documents')/items?$select=File/Name,File/ServerRelativeUrl,File/Length,Modified,KaptureDepartment,KaptureSubDepartment,KaptureCategory,KaptureTags&$expand=File&$filter=FSObjType eq 0&$orderby=Modified desc&$top=500`);
+      const allItems: any[] = [];
+      while (nextUrl) {
+        const response: SPHttpClientResponse = await this.request(nextUrl, 'GET');
+        if (!response.ok) throw new Error(`Could not access repository documents (${response.status}). Confirm the Documents library and your SharePoint permissions.`);
+        const data: any = await response.json();
+        allItems.push(...(data.value || []));
+        nextUrl = data['@odata.nextLink'] || data['odata.nextLink'] || undefined;
+      }
+      const files: IKnowledgeFile[] = allItems.map((item: any) => ({ Name: item.File.Name, ServerRelativeUrl: item.File.ServerRelativeUrl, Length: String(item.File.Length || 0), TimeLastModified: item.Modified, Department: item.KaptureDepartment || '', SubDepartment: item.KaptureSubDepartment || '', Category: item.KaptureCategory || '', Tags: item.KaptureTags || '' })).filter((file: IKnowledgeFile) => file.ServerRelativeUrl && file.ServerRelativeUrl.indexOf(root) === 0);
       this.setState({ files, loading: false });
     } catch (e) { this.setState({ loading: false, error: e instanceof Error ? e.message : 'Unable to load repository documents.' }); }
   }
@@ -91,23 +99,30 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
         { FieldName: 'KaptureSubDepartment', FieldValue: this.state.subDepartment },
         { FieldName: 'KaptureCategory', FieldValue: this.state.category },
         { FieldName: 'KaptureDescription', FieldValue: this.state.description },
-        { FieldName: 'KaptureTags', FieldValue: this.state.tags }
+        { FieldName: 'KaptureTags', FieldValue: this.state.tags.join('; ') }
       ];
       const metadataResponse = await this.request(this.api(`/web/GetFileByServerRelativeUrl('${this.escapeOData(fileUrl)}')/ListItemAllFields/ValidateUpdateListItem`), 'POST', JSON.stringify({ formValues: metadata, bNewDocumentUpdate: false }));
       if (!metadataResponse.ok) throw new Error('The file was uploaded, but its metadata could not be saved. Please ask the SharePoint administrator to check the Kapture metadata columns.');
-      this.setState({ uploading: false, message: `Successfully uploaded ${file.name} to ${this.state.department}${this.state.subDepartment ? ` / ${this.state.subDepartment}` : ''}.`, selectedFile: undefined, description: '', tags: '' });
+      this.setState({ uploading: false, message: `Successfully uploaded ${file.name} to ${this.state.department}${this.state.subDepartment ? ` / ${this.state.subDepartment}` : ''}.`, selectedFile: undefined, description: '', tags: [] });
       const input = document.getElementById('kapture-admin-file') as HTMLInputElement; if (input) input.value = '';
       await this.loadFiles();
     } catch (e) { this.setState({ uploading: false, error: e instanceof Error ? e.message : 'Upload failed.' }); }
   }
   private formatDate(value: string): string { return value ? new Date(value).toLocaleDateString() : '—'; }
+  private toggleTag = (tag: string): void => { this.setState(state => ({ tags: state.tags.indexOf(tag) >= 0 ? state.tags.filter(t => t !== tag) : [...state.tags, tag] })); };
+  private get departmentStats(): { name: string; count: number }[] { return DEPARTMENTS.map(name => ({ name, count: this.state.files.filter(f => f.Department === name).length })).sort((a,b) => b.count-a.count); }
+  private get categoryStats(): { name: string; count: number }[] { return CATEGORIES.map(name => ({ name, count: this.state.files.filter(f => f.Category === name).length })).sort((a,b) => b.count-a.count); }
+  private get operationsStats(): { name: string; count: number }[] { return OPERATIONS.map(name => ({ name, count: this.state.files.filter(f => f.Department === 'Operations' && f.SubDepartment === name).length })).sort((a,b) => b.count-a.count); }
   private get visibleFiles(): IKnowledgeFile[] { const term = this.state.search.toLowerCase(); return this.state.files.filter(f => f.Name.toLowerCase().indexOf(term) >= 0); }
   public render(): React.ReactElement<IKaptureAdminProps> {
     const isVideo = !!this.state.selectedFile && this.state.selectedFile.type.indexOf('video/') === 0;
+    const maxDept = Math.max(1, ...this.departmentStats.map(x => x.count));
+    const maxCat = Math.max(1, ...this.categoryStats.map(x => x.count));
+    const maxOps = Math.max(1, ...this.operationsStats.map(x => x.count));
     return <div className={styles.root}>
-      <div className={styles.topbar}><div className={styles.brandMark}>K</div><div className={styles.brandText}><strong>KAPTURE</strong><span>KNOWLEDGE MANAGEMENT</span></div><div className={styles.topSpacer} /><div className={styles.profile}><span className={styles.avatar}>{(this.props.displayName || 'A').charAt(0).toUpperCase()}</span><span><small>ADMINISTRATOR</small><strong>{this.props.displayName}</strong></span></div></div>
-      <section className={styles.hero}><div className={styles.heroCopy}><div className={styles.eyebrow}>INDOVANCE · KNOWLEDGE OPERATIONS</div><h1>Knowledge Command Centre</h1><p>One place to curate, organise and share the knowledge that moves Indovance forward.</p><div className={styles.heroMeta}><span><i className={styles.liveDot} /> Connected to Kapture SharePoint</span><span>·</span><span>Shared knowledge repository</span></div></div><div className={styles.heroArt}><div className={styles.artCircle}><span>k</span></div><div className={styles.artTile}><b>KNOWLEDGE</b><small>CAPTURE · ORGANISE · SHARE</small></div></div></section>
-      <div className={styles.sectionTitle}><div><span className={styles.kicker}>WORKSPACE</span><h2>Manage your knowledge</h2><p>Upload new resources or find what is already available.</p></div><button className={styles.refresh} onClick={() => this.loadFiles()}>↻ Refresh repository</button></div>
+      <div className={styles.topbar}><div className={styles.brandText}><strong className={styles.indovanceWordmark}>INDOVANCE</strong><span>KNOWLEDGE OPERATIONS</span></div><div className={styles.topSpacer} /><div className={styles.profile}><span className={styles.avatar}>{(this.props.displayName || 'A').charAt(0).toUpperCase()}</span><span><small>ADMINISTRATOR</small><strong>{this.props.displayName}</strong></span></div></div>
+      <section className={styles.hero}><div className={styles.heroCopy}><div className={styles.eyebrow}>INDOVANCE · KNOWLEDGE OPERATIONS</div><h1>Indovance Knowledge Hub</h1><p>One place to capture, organise and share the knowledge that powers Indovance.</p></div><div className={styles.heroArt}><div className={styles.heroStamp}><strong>INDOVANCE</strong><span>KNOWLEDGE HUB</span><i /></div></div></section>
+      <div className={styles.sectionTitle}><div><span className={styles.kicker}>ADMIN WORKSPACE</span><h2>Knowledge operations</h2><p>Upload resources, monitor coverage and manage the knowledge repository.</p></div><button className={styles.refresh} onClick={() => this.loadFiles()}>↻ Refresh repository</button></div>
       {this.state.message && <div className={styles.success}><b>✓</b>{this.state.message}</div>}{this.state.error && <div className={styles.error}><b>!</b>{this.state.error}</div>}
       <div className={styles.layout}>
         <section className={styles.uploadCard}><div className={styles.cardHead}><div className={styles.iconBadge}><span>↑</span></div><div><h3>Add to the knowledge base</h3><p>Share a useful resource with your colleagues.</p></div></div>
@@ -116,17 +131,18 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
             {this.state.department === 'Operations' && <label className={styles.field}>Operations sub-department<select value={this.state.subDepartment} onChange={e => this.setState({ subDepartment: e.target.value })}><option value="">Select sub-department</option>{OPERATIONS.map(d => <option key={d} value={d}>{d}</option>)}</select></label>}
             <label className={styles.field}>Document category<select value={this.state.category} onChange={e => this.setState({ category: e.target.value })}><option value="">Select category</option>{CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}</select></label>
             <label className={`${styles.field} ${styles.full}`}>Description <textarea rows={2} value={this.state.description} onChange={e => this.setState({ description: e.target.value })} placeholder="What is this resource about? (optional)" /></label>
-            <label className={`${styles.field} ${styles.full}`}>Tags <input value={this.state.tags} onChange={e => this.setState({ tags: e.target.value })} placeholder="e.g. design, onboarding, quality (comma-separated)" /></label></div>
+            <div className={`${styles.field} ${styles.full}`}><span className={styles.fieldLabel}>Suggested tags <small>Select all that apply</small></span><div className={styles.tagPicker}>{TAG_OPTIONS.map(tag => <button type="button" key={tag} className={`${styles.tagOption} ${this.state.tags.indexOf(tag) >= 0 ? styles.tagSelected : ''}`} onClick={() => this.toggleTag(tag)}>{this.state.tags.indexOf(tag) >= 0 ? '✓ ' : '+ '}{tag}</button>)}</div></div></div>
           <button className={styles.primary} disabled={this.state.uploading} onClick={() => this.upload()}>{this.state.uploading ? <><span className={styles.spinner} /> Uploading resource…</> : 'Upload to knowledge repository  →'}</button>
           <div className={styles.secureNote}><span>▣</span> Files are stored in SharePoint. Access remains governed by your organisation's permissions.</div>
         </section>
-        <section className={styles.libraryCard}><div className={styles.libraryHead}><div><span className={styles.kicker}>YOUR CONTENT</span><h3>Repository documents</h3><p>Latest files in the repository root.</p></div><div className={styles.count}>{this.state.files.length}<small>FILES</small></div></div>
+        <section className={styles.libraryCard}><div className={styles.libraryHead}><div><span className={styles.kicker}>YOUR CONTENT</span><h3>Repository documents</h3><p>Files stored in the knowledge repository.</p></div><div className={styles.count}>{this.state.files.length}<small>FILES</small></div></div>
           <div className={styles.searchBox}><span>⌕</span><input value={this.state.search} onChange={e => this.setState({ search: e.target.value })} placeholder="Search documents by name…" /></div>
           {this.state.loading ? <div className={styles.empty}>Loading repository…</div> : this.visibleFiles.length === 0 ? <div className={styles.empty}><span>▤</span><strong>{this.state.files.length ? 'No matching documents' : 'Your knowledge library is ready'}</strong><small>{this.state.files.length ? 'Try another search term.' : 'Your uploaded resources will appear here.'}</small></div> : <div className={styles.fileList}>{this.visibleFiles.map(file => <div className={styles.file} key={file.ServerRelativeUrl}><div className={styles.fileIcon}>{file.Name.toLowerCase().match(/\.(mp4|mov|wmv|avi|m4v|webm)$/) ? '▶' : 'DOC'}</div><div className={styles.fileInfo}><strong>{file.Name}</strong><span>Modified {this.formatDate(file.TimeLastModified)} · {Math.max(1, Math.round(Number(file.Length || 0) / 1024))} KB</span></div><a href={file.ServerRelativeUrl} target="_blank" rel="noreferrer" className={styles.openLink}>Open ↗</a></div>)}</div>}
-          <div className={styles.libraryFoot}><span className={styles.liveDot} /> Connected to Kapture Knowledge Repository</div>
+          <div className={styles.libraryFoot}><span className={styles.liveDot} /> Repository contents loaded</div>
         </section>
       </div>
-      <footer className={styles.footer}><span>INDOVANCE <b>·</b> KAPTURE KNOWLEDGE MANAGEMENT</span><span>Built for sharing what we know.</span></footer>
+      <section className={styles.analytics}><div className={styles.analyticsHeading}><div><span className={styles.kicker}>REPOSITORY INSIGHTS</span><h2>Knowledge coverage</h2><p>Live counts based on documents and their saved SharePoint metadata.</p></div><div className={styles.totalMetric}><strong>{this.state.files.length}</strong><span>TOTAL DOCUMENTS</span></div></div><div className={styles.analyticsGrid}><div className={styles.analyticsCard}><h3>Documents by department</h3><p>Where organisational knowledge is currently stored</p>{this.departmentStats.map(item => <div className={styles.statRow} key={item.name}><div><span>{item.name}</span><b>{item.count}</b></div><div className={styles.barTrack}><i style={{ width: `${(item.count / maxDept) * 100}%` }} /></div></div>)}</div><div className={styles.analyticsCard}><h3>Documents by category</h3><p>Content mix across the repository</p>{this.categoryStats.map(item => <div className={styles.statRow} key={item.name}><div><span>{item.name}</span><b>{item.count}</b></div><div className={styles.barTrack}><i style={{ width: `${(item.count / maxCat) * 100}%` }} /></div></div>)}</div><div className={styles.analyticsCard}><h3>Operations capabilities</h3><p>Knowledge coverage across Operations sub-departments</p>{this.operationsStats.map(item => <div className={styles.statRow} key={item.name}><div><span>{item.name}</span><b>{item.count}</b></div><div className={styles.barTrack}><i style={{ width: `${(item.count / maxOps) * 100}%` }} /></div></div>)}</div></div><div className={styles.analyticsNote}>Counts are calculated from all repository items returned through SharePoint paging. Documents without department or category metadata are included in the total but not assigned to a breakdown.</div></section>
+      <footer className={styles.footer}><span>INDOVANCE <b>·</b> KNOWLEDGE OPERATIONS</span><span>Built for sharing what we know.</span></footer>
     </div>;
   }
 }

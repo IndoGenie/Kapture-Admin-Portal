@@ -34,3 +34,13 @@ npx gulp package-solution --ship
 Package output: `sharepoint/solution/kapture-admin-portal.sppkg`.
 
 The GitHub Actions workflow builds and uploads this package as an artifact. This source ZIP has not been tenant-deployed or live-tested; test first with a non-sensitive sample file and verify its folder and metadata in SharePoint.
+
+
+## Version 0.2.1
+
+- Rebranded the interface as Indovance Knowledge Hub and removed Kapture-specific connection messaging and the generic K mark.
+- Added predefined multi-select tags to reduce manual metadata entry.
+- Added repository analytics for total documents, department distribution, category distribution and Operations sub-department coverage.
+- Analytics read the SharePoint metadata columns and follow SharePoint paging so the dashboard is not limited to the first 500 items.
+- Preserved the existing solution ID, web-part ID, component identity and repository folder default.
+- Analytics are only as accurate as the metadata saved on each file; legacy files without metadata remain unclassified in the breakdowns.
