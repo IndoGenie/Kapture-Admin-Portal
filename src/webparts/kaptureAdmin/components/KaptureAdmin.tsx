@@ -28,7 +28,8 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
   }
   private async ensureMetadataFields(): Promise<void> {
     // Metadata columns belong to the parent Documents library, not to the repository folder.
-    // Use SharePoint's documented XmlSchemaFieldCreationInformation payload.
+    // Query the Fields collection with an OData filter rather than the single-field
+    // getbyinternalnameortitle route, which can return HTTP 400 in some SharePoint tenants.
     const fields = [
       { name: 'KaptureDepartment', title: 'Kapture Department', type: 'Text' },
       { name: 'KaptureSubDepartment', title: 'Kapture Sub-department', type: 'Text' },
@@ -39,15 +40,20 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     const listApi = this.api("/web/lists/getbytitle('Documents')");
     const listCheck = await this.request(listApi + '?$select=Id,Title', 'GET');
     if (!listCheck.ok) {
-      throw new Error(`SharePoint could not find or open the 'Documents' library (${listCheck.status}). Confirm the library exists and that you have access.`);
+      const detail = await listCheck.text().catch(() => '');
+      throw new Error(`SharePoint could not open the 'Documents' library (${listCheck.status}). ${detail.substring(0, 300)}`);
     }
     for (const field of fields) {
-      const fieldUrl = `${listApi}/fields/getbyinternalnameortitle('${field.name}')`;
+      const filter = encodeURIComponent(`InternalName eq '${field.name}'`);
+      const fieldUrl = `${listApi}/fields?$select=Id,InternalName,Title&$filter=${filter}`;
       const check = await this.request(fieldUrl, 'GET');
-      if (check.ok) continue;
-      if (check.status !== 404) {
-        throw new Error(`Could not check the '${field.title}' column (${check.status}). Your SharePoint account may not have permission to read library columns.`);
+      if (!check.ok) {
+        const detail = await check.text().catch(() => '');
+        throw new Error(`Could not inspect the '${field.title}' column (${check.status}). SharePoint response: ${detail.substring(0, 350)}`);
       }
+      const fieldData: any = await check.json();
+      if ((fieldData.value || []).some((item: any) => item.InternalName === field.name)) continue;
+
       const xml = `<Field Type="${field.type}" DisplayName="${field.title}" Name="${field.name}" StaticName="${field.name}" Group="Kapture Knowledge" />`;
       const add = await this.request(`${listApi}/fields/addFieldAsXml`, 'POST', JSON.stringify({
         parameters: {
@@ -57,14 +63,17 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
         }
       }));
       if (!add.ok) {
-        // A concurrent initialisation may have created the field after our first check.
+        // Recheck through the same Fields collection in case another request created it.
         const confirm = await this.request(fieldUrl, 'GET');
-        if (confirm.ok) continue;
+        if (confirm.ok) {
+          const confirmData: any = await confirm.json();
+          if ((confirmData.value || []).some((item: any) => item.InternalName === field.name)) continue;
+        }
         const detail = await add.text().catch(() => '');
         if (add.status === 403) {
-          throw new Error(`The '${field.title}' column is missing and your account cannot create library columns (403). Ask Ajit or a SharePoint site owner to create the five Kapture metadata columns once.`);
+          throw new Error(`The '${field.title}' column is missing and your account cannot create library columns (403). Ask a SharePoint administrator to create the five Kapture metadata columns once.`);
         }
-        throw new Error(`SharePoint could not create the '${field.title}' column (${add.status}). ${detail.substring(0, 240)}`);
+        throw new Error(`SharePoint could not create the '${field.title}' column (${add.status}). SharePoint response: ${detail.substring(0, 350)}`);
       }
     }
   }

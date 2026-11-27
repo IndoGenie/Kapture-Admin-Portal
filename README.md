@@ -56,3 +56,10 @@ The GitHub Actions workflow builds and uploads this package as an artifact. This
 - Department and Operations sub-department folders remain automatically created on first upload.
 
 The SharePoint account deploying/using the portal must have permission to create library columns on first initialisation, or a site owner must create them once.
+
+
+## v0.2.3 diagnostic correction
+- Replaced the single-field `getbyinternalnameortitle()` check with a filtered query against the library Fields collection.
+- Preserves the five metadata columns and their internal names.
+- Displays the SharePoint response body when field inspection or creation fails, so any remaining tenant-specific issue can be diagnosed without guessing.
+- Package version: 0.2.3.0.
