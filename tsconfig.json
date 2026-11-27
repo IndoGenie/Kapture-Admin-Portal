@@ -1,8 +1,12 @@
 
 {
-  "extends": "./node_modules/@microsoft/sp-build-web/tsconfig.json",
+  "extends": "./node_modules/@microsoft/rush-stack-compiler-4.7/includes/tsconfig-web.json",
   "compilerOptions": {
     "target": "es5",
+    "lib": [
+      "es2015",
+      "dom"
+    ],
     "forceConsistentCasingInFileNames": true,
     "module": "commonjs",
     "jsx": "react",
@@ -12,9 +16,10 @@
     "skipLibCheck": true,
     "outDir": "lib",
     "inlineSources": false,
+    "noImplicitAny": true,
     "noUnusedLocals": false,
     "noUnusedParameters": false,
-    "noImplicitAny": true,
+    "allowSyntheticDefaultImports": true,
     "types": [
       "webpack-env"
     ]
