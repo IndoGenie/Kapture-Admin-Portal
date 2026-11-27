@@ -44,3 +44,15 @@ The GitHub Actions workflow builds and uploads this package as an artifact. This
 - Analytics read the SharePoint metadata columns and follow SharePoint paging so the dashboard is not limited to the first 500 items.
 - Preserved the existing solution ID, web-part ID, component identity and repository folder default.
 - Analytics are only as accurate as the metadata saved on each file; legacy files without metadata remain unclassified in the breakdowns.
+
+
+## v0.2.2 repository integration correction
+
+- Uses the confirmed SharePoint document library title `Documents`.
+- Corrects the SharePoint REST field-creation payload to `SP.XmlSchemaFieldCreationInformation`.
+- Checks library access and existing fields before attempting creation.
+- Reports missing-library, missing-folder and permission errors separately.
+- Restricts repository listing and analytics to the configured `Kapture Knowledge Repository` folder and its descendants.
+- Department and Operations sub-department folders remain automatically created on first upload.
+
+The SharePoint account deploying/using the portal must have permission to create library columns on first initialisation, or a site owner must create them once.

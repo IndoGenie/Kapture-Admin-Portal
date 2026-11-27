@@ -27,19 +27,45 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     return this.props.spHttpClient.fetch(url, SPHttpClient.configurations.v1, { method, headers, body: body as any });
   }
   private async ensureMetadataFields(): Promise<void> {
+    // Metadata columns belong to the parent Documents library, not to the repository folder.
+    // Use SharePoint's documented XmlSchemaFieldCreationInformation payload.
     const fields = [
-      { name: 'KaptureDepartment', title: 'Kapture Department' },
-      { name: 'KaptureSubDepartment', title: 'Kapture Sub-department' },
-      { name: 'KaptureCategory', title: 'Kapture Category' },
-      { name: 'KaptureDescription', title: 'Kapture Description' },
-      { name: 'KaptureTags', title: 'Kapture Tags' }
+      { name: 'KaptureDepartment', title: 'Kapture Department', type: 'Text' },
+      { name: 'KaptureSubDepartment', title: 'Kapture Sub-department', type: 'Text' },
+      { name: 'KaptureCategory', title: 'Kapture Category', type: 'Text' },
+      { name: 'KaptureDescription', title: 'Kapture Description', type: 'Note' },
+      { name: 'KaptureTags', title: 'Kapture Tags', type: 'Note' }
     ];
+    const listApi = this.api("/web/lists/getbytitle('Documents')");
+    const listCheck = await this.request(listApi + '?$select=Id,Title', 'GET');
+    if (!listCheck.ok) {
+      throw new Error(`SharePoint could not find or open the 'Documents' library (${listCheck.status}). Confirm the library exists and that you have access.`);
+    }
     for (const field of fields) {
-      const check = await this.request(this.api(`/web/lists/getbytitle('Documents')/fields/getbyinternalnameortitle('${field.name}')`), 'GET');
+      const fieldUrl = `${listApi}/fields/getbyinternalnameortitle('${field.name}')`;
+      const check = await this.request(fieldUrl, 'GET');
       if (check.ok) continue;
-      const xml = `<Field Type='Note' DisplayName='${field.title}' Name='${field.name}' StaticName='${field.name}' Group='Kapture Knowledge' />`;
-      const add = await this.request(this.api("/web/lists/getbytitle('Documents')/fields/addFieldAsXml"), 'POST', JSON.stringify({ parameters: { __metadata: { type: 'SP.FieldCreationInformation' }, SchemaXml: xml, Options: 0 } }));
-      if (!add.ok) throw new Error(`Could not create the '${field.title}' metadata column in the Documents library. Ask the SharePoint administrator to create it or grant the required permission. (${add.status})`);
+      if (check.status !== 404) {
+        throw new Error(`Could not check the '${field.title}' column (${check.status}). Your SharePoint account may not have permission to read library columns.`);
+      }
+      const xml = `<Field Type="${field.type}" DisplayName="${field.title}" Name="${field.name}" StaticName="${field.name}" Group="Kapture Knowledge" />`;
+      const add = await this.request(`${listApi}/fields/addFieldAsXml`, 'POST', JSON.stringify({
+        parameters: {
+          __metadata: { type: 'SP.XmlSchemaFieldCreationInformation' },
+          SchemaXml: xml,
+          Options: 0
+        }
+      }));
+      if (!add.ok) {
+        // A concurrent initialisation may have created the field after our first check.
+        const confirm = await this.request(fieldUrl, 'GET');
+        if (confirm.ok) continue;
+        const detail = await add.text().catch(() => '');
+        if (add.status === 403) {
+          throw new Error(`The '${field.title}' column is missing and your account cannot create library columns (403). Ask Ajit or a SharePoint site owner to create the five Kapture metadata columns once.`);
+        }
+        throw new Error(`SharePoint could not create the '${field.title}' column (${add.status}). ${detail.substring(0, 240)}`);
+      }
     }
   }
   private async ensureFolder(path: string): Promise<void> {
@@ -63,18 +89,24 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
   private async loadFiles(): Promise<void> {
     this.setState({ loading: true, error: '' });
     try {
-      const root = this.props.repositoryFolder.replace(/'/g, "''");
+      const root = this.props.repositoryFolder.replace(/\/$/, '');
+      const escapedRoot = this.escapeOData(root);
       await this.ensureMetadataFields();
-      let nextUrl: string | undefined = this.api(`/web/lists/getbytitle('Documents')/items?$select=File/Name,File/ServerRelativeUrl,File/Length,Modified,KaptureDepartment,KaptureSubDepartment,KaptureCategory,KaptureTags&$expand=File&$filter=FSObjType eq 0&$orderby=Modified desc&$top=500`);
+      const folderCheck = await this.request(this.api(`/web/GetFolderByServerRelativeUrl('${escapedRoot}')?$select=ServerRelativeUrl,Name`), 'GET');
+      if (!folderCheck.ok) {
+        throw new Error(`The repository folder was not found at '${root}' (${folderCheck.status}). Confirm the folder exists inside the Documents library.`);
+      }
+      let nextUrl: string | undefined = this.api(`/web/lists/getbytitle('Documents')/items?$select=File/Name,File/ServerRelativeUrl,File/Length,Modified,KaptureDepartment,KaptureSubDepartment,KaptureCategory,KaptureTags&$expand=File&$filter=FSObjType eq 0 and startswith(FileDirRef,'${escapedRoot}')&$orderby=Modified desc&$top=500`);
       const allItems: any[] = [];
       while (nextUrl) {
         const response: SPHttpClientResponse = await this.request(nextUrl, 'GET');
-        if (!response.ok) throw new Error(`Could not access repository documents (${response.status}). Confirm the Documents library and your SharePoint permissions.`);
+        if (!response.ok) throw new Error(`Could not read files from the Kapture Knowledge Repository (${response.status}). Check the Documents library permissions and metadata columns.`);
         const data: any = await response.json();
         allItems.push(...(data.value || []));
         nextUrl = data['@odata.nextLink'] || data['odata.nextLink'] || undefined;
       }
-      const files: IKnowledgeFile[] = allItems.map((item: any) => ({ Name: item.File.Name, ServerRelativeUrl: item.File.ServerRelativeUrl, Length: String(item.File.Length || 0), TimeLastModified: item.Modified, Department: item.KaptureDepartment || '', SubDepartment: item.KaptureSubDepartment || '', Category: item.KaptureCategory || '', Tags: item.KaptureTags || '' })).filter((file: IKnowledgeFile) => file.ServerRelativeUrl && file.ServerRelativeUrl.indexOf(root) === 0);
+      const rootPrefix = `${root}/`;
+      const files: IKnowledgeFile[] = allItems.map((item: any) => ({ Name: item.File.Name, ServerRelativeUrl: item.File.ServerRelativeUrl, Length: String(item.File.Length || 0), TimeLastModified: item.Modified, Department: item.KaptureDepartment || '', SubDepartment: item.KaptureSubDepartment || '', Category: item.KaptureCategory || '', Tags: item.KaptureTags || '' })).filter((file: IKnowledgeFile) => file.ServerRelativeUrl && file.ServerRelativeUrl.indexOf(rootPrefix) === 0);
       this.setState({ files, loading: false });
     } catch (e) { this.setState({ loading: false, error: e instanceof Error ? e.message : 'Unable to load repository documents.' }); }
   }

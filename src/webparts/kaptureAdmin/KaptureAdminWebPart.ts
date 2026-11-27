@@ -20,6 +20,6 @@ export default class KaptureAdminWebPart extends BaseClientSideWebPart<IKaptureA
   protected onDispose(): void { ReactDom.unmountComponentAtNode(this.domElement); }
   protected get dataVersion(): Version { return Version.parse('1.0'); }
   protected getPropertyPaneConfiguration() { return { pages: [{ header: { description: 'Configure the single shared Kapture document library' }, groups: [{ groupName: 'SharePoint repository', groupFields: [
-    PropertyPaneTextField('repositoryFolder', { label: 'Document library server-relative URL' })
+    PropertyPaneTextField('repositoryFolder', { label: 'Repository folder server-relative URL' })
   ] }] }] }; }
 }
