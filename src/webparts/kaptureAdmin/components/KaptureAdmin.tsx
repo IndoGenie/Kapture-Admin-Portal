@@ -16,14 +16,15 @@ interface IState {
 export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IState> {
   constructor(props: IKaptureAdminProps) {
     super(props);
-    this.state = { files: [], loading: true, uploading: false, message: '', error: '', selectedFiles: [], failedFiles: [], uploadProgress: '', page: 1, pageSize: 10, department: '', subDepartment: '', category: '', description: '', tags: [], search: '', filterDepartment: '', filterCategory: '', manifest: {} };
+    this.state = { files: [], loading: true, uploading: false, message: '', error: '', department: '', subDepartment: '', category: '', description: '', tags: [], search: '' };
   }
   public componentDidMount(): void { this.loadFiles(); }
   private api = (path: string): string => `${this.props.siteUrl}/_api${path}`;
   private escapeOData = (value: string): string => value.replace(/'/g, "''");
-  private async request(url: string, method: string, body?: string | Blob): Promise<SPHttpClientResponse> {
+  private async request(url: string, method: string, body?: string | Blob, extraHeaders?: { [key: string]: string }): Promise<SPHttpClientResponse> {
     const headers: { [key: string]: string } = { Accept: 'application/json;odata=nometadata' };
     if (method !== 'GET') headers['Content-Type'] = body instanceof Blob ? 'application/octet-stream' : 'application/json;odata=nometadata';
+    if (extraHeaders) Object.keys(extraHeaders).forEach(key => { headers[key] = extraHeaders[key]; });
     return this.props.spHttpClient.fetch(url, SPHttpClient.configurations.v1, { method, headers, body: body as any });
   }
   private async ensureFolder(path: string): Promise<void> {
@@ -50,14 +51,27 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     const url = this.api(`/web/GetFileByServerRelativeUrl('${this.escapeOData(root + '/_KaptureIndex.json')}')/$value`);
     const response = await this.request(url, 'GET');
     if (response.status === 404) return {};
-    if (!response.ok) return {};
-    try { return JSON.parse(await response.text()); } catch (_) { return {}; }
+    if (!response.ok) throw new Error(`Could not read _KaptureIndex.json (${response.status}).`);
+    try { return JSON.parse(await response.text()); } catch (_) { throw new Error('The existing _KaptureIndex.json is not valid JSON; it was not overwritten.'); }
   }
   private async writeIndex(index: { [key: string]: any }): Promise<void> {
     const root = this.props.repositoryFolder.replace(/\/$/, '');
-    const url = this.api(`/web/GetFolderByServerRelativeUrl('${this.escapeOData(root)}')/Files/add(url='_KaptureIndex.json',overwrite=true)`);
-    const response = await this.request(url, 'POST', new Blob([JSON.stringify(index)], { type: 'application/json' }));
-    if (!response.ok) throw new Error(`The document uploaded, but its searchable description/tag index could not be saved (${response.status}).`);
+    const filePath = `${root}/_KaptureIndex.json`;
+    const fileUrl = this.api(`/web/GetFileByServerRelativeUrl('${this.escapeOData(filePath)}')/$value`);
+    const content = JSON.stringify(index);
+    // Update the existing JSON file in place. SharePoint's file-content endpoint
+    // requires POST + X-HTTP-Method: PUT and an IF-MATCH header.
+    const exists = await this.request(this.api(`/web/GetFileByServerRelativeUrl('${this.escapeOData(filePath)}')?$select=Name`), 'GET');
+    if (exists.ok) {
+      const update = await this.request(fileUrl, 'POST', content, { 'X-HTTP-Method': 'PUT', 'IF-MATCH': '*' });
+      if (!update.ok) throw new Error(`SharePoint could not update _KaptureIndex.json (${update.status}).`);
+      return;
+    }
+    if (exists.status !== 404) throw new Error(`Could not check _KaptureIndex.json (${exists.status}).`);
+    // First-time creation through the folder Files API.
+    const createUrl = this.api(`/web/GetFolderByServerRelativeUrl('${this.escapeOData(root)}')/Files/add(url='_KaptureIndex.json',overwrite=true)`);
+    const create = await this.request(createUrl, 'POST', new Blob([content], { type: 'application/json' }));
+    if (!create.ok) throw new Error(`SharePoint could not create _KaptureIndex.json (${create.status}).`);
   }
   private async readPagedCollection(url: string): Promise<any[]> {
     const results: any[] = [];
@@ -132,7 +146,9 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     const files = this.state.failedFiles.length ? this.state.failedFiles : this.state.selectedFiles;
     if (!files.length) { this.setState({ error: 'Choose one or more files before uploading.' }); return; }
     if (!Object.keys(this.state.manifest).length && (!this.state.department || !this.state.category || (this.state.department === 'Operations' && !this.state.subDepartment))) { this.setState({ error: 'Choose department, Operations sub-department (if applicable) and category, or upload a completed CSV manifest.' }); return; }
-    const failures: File[] = []; let metadataWarnings = 0; let completed = 0; this.setState({ uploading: true, error: '', message: '', uploadProgress: `Preparing ${files.length} files…` });
+    const failures: File[] = []; let completed = 0; let uploadedCount = 0;
+    const pendingIndexEntries: { [url: string]: any } = {};
+    this.setState({ uploading: true, error: '', message: '', uploadProgress: `Preparing ${files.length} files…` });
     for (const file of files) {
       const meta = this.state.manifest[file.name] || { department: this.state.department, subDepartment: this.state.subDepartment, category: this.state.category, description: this.state.description, tags: this.state.tags.join('; ') };
       if (!meta.department || DEPARTMENTS.indexOf(meta.department) < 0 || !meta.category || CATEGORIES.indexOf(meta.category) < 0 || (meta.department === 'Operations' && OPERATIONS.indexOf(meta.subDepartment) < 0)) { failures.push(file); completed++; this.setState({ uploadProgress: `${completed} of ${files.length} checked · ${file.name} needs valid manifest metadata` }); continue; }
@@ -143,12 +159,22 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
         const uploadUrl = this.api(`/web/GetFolderByServerRelativeUrl('${this.escapeOData(destination)}')/Files/add(url='${this.escapeOData(file.name)}',overwrite=false)`);
         const response = await this.request(uploadUrl, 'POST', file); if (!response.ok) throw new Error(`SharePoint upload returned ${response.status}`);
         const uploaded: any = await response.json(); const fileUrl = uploaded.ServerRelativeUrl || `${destination}/${file.name}`;
-        // Read-modify-write for each file, sequentially, to avoid overwriting another file's metadata within this batch.
-        const index = await this.readIndex(); index[fileUrl] = { department: meta.department, subDepartment: meta.subDepartment, category: meta.category, description: meta.description || '', tags: meta.tags || '', updated: new Date().toISOString() }; try { await this.writeIndex(index); } catch (_) { metadataWarnings++; }
+        pendingIndexEntries[fileUrl] = { department: meta.department, subDepartment: meta.subDepartment, category: meta.category, description: meta.description || '', tags: meta.tags || '', updated: new Date().toISOString() };
+        uploadedCount++;
       } catch (_) { failures.push(file); }
       completed++; this.setState({ uploadProgress: `${completed} of ${files.length} processed · ${failures.length} failed` });
     }
-    this.setState({ uploading: false, failedFiles: failures, selectedFiles: failures, selectedFile: failures[0], message: `${files.length - failures.length} of ${files.length} files uploaded successfully.${failures.length ? ` ${failures.length} failed; use Retry failed files after checking their metadata or permissions.` : ''}${metadataWarnings ? ` Metadata index could not be updated for ${metadataWarnings} uploaded file(s); the files themselves are in SharePoint.` : ''}`, error: failures.length ? 'Some files could not be uploaded. Successful files have been retained and will not be retried.' : '', uploadProgress: '' });
+    let indexWarning = '';
+    if (uploadedCount > 0) {
+      try {
+        const index = await this.readIndex();
+        Object.keys(pendingIndexEntries).forEach(url => { index[url] = pendingIndexEntries[url]; });
+        await this.writeIndex(index);
+      } catch (e) {
+        indexWarning = ` Metadata index update failed (${e instanceof Error ? e.message : 'SharePoint error'}). Files are uploaded, but descriptions and tags may not be searchable until the index is repaired.`;
+      }
+    }
+    this.setState({ uploading: false, failedFiles: failures, selectedFiles: failures, selectedFile: failures[0], message: `${uploadedCount} of ${files.length} files uploaded successfully.${failures.length ? ` ${failures.length} failed; use Retry failed files after checking their metadata or permissions.` : ''}${indexWarning}`, error: failures.length ? 'Some files could not be uploaded. Successful files have been retained and will not be retried.' : '', uploadProgress: '' });
     await this.loadFiles();
   }
   private async upload(): Promise<void> { return this.uploadBatch(); }
