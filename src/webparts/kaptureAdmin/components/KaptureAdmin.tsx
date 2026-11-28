@@ -57,7 +57,6 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
       const xml = `<Field Type="${field.type}" DisplayName="${field.title}" Name="${field.name}" StaticName="${field.name}" Group="Kapture Knowledge" />`;
       const add = await this.request(`${listApi}/fields/createFieldAsXml`, 'POST', JSON.stringify({
         parameters: {
-          __metadata: { type: 'SP.XmlSchemaFieldCreationInformation' },
           SchemaXml: xml,
           Options: 0
         }

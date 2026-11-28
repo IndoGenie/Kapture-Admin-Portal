@@ -68,3 +68,9 @@ The SharePoint account deploying/using the portal must have permission to create
 ## v0.2.4 correction
 - Corrected the SharePoint Fields REST operation from the unsupported `addFieldAsXml` route to the documented `createFieldAsXml` route. Microsoft documents the REST endpoint as `/fields/createFieldAsXml`; the previous route produced `Cannot find resource for the request addFieldAsXml`.
 - The solution version is `0.2.4.0`.
+
+
+## v0.2.5 correction
+
+- Uses the SharePoint REST `CreateFieldAsXml` operation with the SPHttpClient OData v4 / `odata=nometadata` request format. The `parameters` object contains `SchemaXml` and `Options` only; it deliberately omits the OData v3 `__metadata` type annotation that SharePoint rejected as an unknown property in the previous build.
+- This is a source-level correction. Compile with the repository GitHub Actions workflow and validate against the Kapture tenant before production uploads.
