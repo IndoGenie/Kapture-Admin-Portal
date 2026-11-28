@@ -1,28 +1,29 @@
-# Kapture Admin Portal — v0.2.0
+# Kapture Admin Portal — v0.3.0 (folder-based repository)
 
-SPFx web part for the existing Kapture SharePoint site. This release adds the Indovance department structure, Operations sub-departments, category/description/tags capture, automatic folder routing, metadata writing, video file selection, repository search and a redesigned responsive interface.
+SPFx web part for the existing Kapture SharePoint site. This release removes all dependency on custom SharePoint library columns. It uses the existing `Documents` library and the existing folder `/sites/Kapture/Shared Documents/Kapture Knowledge Repository`.
 
-## Repository target
+## Folder routing
 
-Default server-relative path:
+Uploads are routed automatically to:
 
-`/sites/Kapture/Shared Documents/Kapture Knowledge Repository`
+- Standard departments: `Kapture Knowledge Repository/<Department>/<Category>/`
+- Operations: `Kapture Knowledge Repository/Operations/<Sub-department>/<Category>/`
 
-The application creates missing department folders on upload. Operations documents are stored under `Operations/<Sub-department>`; other departments are stored under `<Department>`. Categories are metadata, not folders.
+The app creates missing folders as needed. The department and category breakdowns in the admin analytics are inferred from these folder paths. The agreed department, Operations sub-department and category lists are built into the interface.
 
-## SharePoint prerequisites and important notes
+## Descriptions and suggested tags
 
-- The signed-in uploader needs permission to add files and create folders in the repository.
-- The implementation currently targets the standard SharePoint library title `Documents` (URL segment `Shared Documents`). Confirm this title in Site contents if the tenant has renamed the library.
-- On the first upload, the app attempts to create five text metadata columns on the Documents library: Kapture Department, Kapture Sub-department, Kapture Category, Kapture Description and Kapture Tags. The uploader must have permission to add library columns. If the tenant does not allow this, a SharePoint administrator should create those columns with the same internal names before testing.
-- The repository document list reads file items from the Documents library and filters them to the configured repository path.
-- The Employee Wiki must separately be configured to read from this same repository path. This package does not modify the Employee Wiki.
-- Video selection is enabled for common formats. Playback/preview behaviour in the Employee Wiki depends on its own implementation and SharePoint media support.
-- Access control is enforced by SharePoint permissions, not by hiding the page or web part.
+Descriptions and selected predefined tags are stored in `_KaptureIndex.json` in the repository root, keyed by each file's server-relative URL. This is an application index, not SharePoint column metadata. The file is excluded from the document count/list. This simple index is intended for the single-admin upload workflow; simultaneous uploads by multiple admins could overwrite each other's index updates. SharePoint permissions remain the security boundary.
+
+## Existing repository
+
+Default path: `/sites/Kapture/Shared Documents/Kapture Knowledge Repository`
+
+The app does not create custom columns and does not alter the Employee Wiki. Existing documents placed directly in the repository root or in unrecognised folder paths may not appear in department/category analytics until organised into the agreed folder structure.
 
 ## Build
 
-Use Node.js 18.19.0. From the project root:
+Node.js 18.19.0:
 
 ```bash
 npm install --no-audit --no-fund
@@ -33,44 +34,4 @@ npx gulp package-solution --ship
 
 Package output: `sharepoint/solution/kapture-admin-portal.sppkg`.
 
-The GitHub Actions workflow builds and uploads this package as an artifact. This source ZIP has not been tenant-deployed or live-tested; test first with a non-sensitive sample file and verify its folder and metadata in SharePoint.
-
-
-## Version 0.2.1
-
-- Rebranded the interface as Indovance Knowledge Hub and removed Kapture-specific connection messaging and the generic K mark.
-- Added predefined multi-select tags to reduce manual metadata entry.
-- Added repository analytics for total documents, department distribution, category distribution and Operations sub-department coverage.
-- Analytics read the SharePoint metadata columns and follow SharePoint paging so the dashboard is not limited to the first 500 items.
-- Preserved the existing solution ID, web-part ID, component identity and repository folder default.
-- Analytics are only as accurate as the metadata saved on each file; legacy files without metadata remain unclassified in the breakdowns.
-
-
-## v0.2.2 repository integration correction
-
-- Uses the confirmed SharePoint document library title `Documents`.
-- Corrects the SharePoint REST field-creation payload to `SP.XmlSchemaFieldCreationInformation`.
-- Checks library access and existing fields before attempting creation.
-- Reports missing-library, missing-folder and permission errors separately.
-- Restricts repository listing and analytics to the configured `Kapture Knowledge Repository` folder and its descendants.
-- Department and Operations sub-department folders remain automatically created on first upload.
-
-The SharePoint account deploying/using the portal must have permission to create library columns on first initialisation, or a site owner must create them once.
-
-
-## v0.2.4 diagnostic correction
-- Replaced the single-field `getbyinternalnameortitle()` check with a filtered query against the library Fields collection.
-- Preserves the five metadata columns and their internal names.
-- Displays the SharePoint response body when field inspection or creation fails, so any remaining tenant-specific issue can be diagnosed without guessing.
-- Package version: 0.2.4.0.
-
-
-## v0.2.4 correction
-- Corrected the SharePoint Fields REST operation from the unsupported `addFieldAsXml` route to the documented `createFieldAsXml` route. Microsoft documents the REST endpoint as `/fields/createFieldAsXml`; the previous route produced `Cannot find resource for the request addFieldAsXml`.
-- The solution version is `0.2.4.0`.
-
-
-## v0.2.5 correction
-
-- Uses the SharePoint REST `CreateFieldAsXml` operation with the SPHttpClient OData v4 / `odata=nometadata` request format. The `parameters` object contains `SchemaXml` and `Options` only; it deliberately omits the OData v3 `__metadata` type annotation that SharePoint rejected as an unknown property in the previous build.
-- This is a source-level correction. Compile with the repository GitHub Actions workflow and validate against the Kapture tenant before production uploads.
+The source must be built by GitHub Actions before deployment. A successful compilation does not by itself prove tenant upload permissions or live SharePoint behaviour; test with one non-sensitive sample file and verify its destination folder and portal listing before bulk use.

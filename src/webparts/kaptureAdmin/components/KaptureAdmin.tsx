@@ -26,56 +26,6 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     if (method !== 'GET') headers['Content-Type'] = body instanceof Blob ? 'application/octet-stream' : 'application/json;odata=nometadata';
     return this.props.spHttpClient.fetch(url, SPHttpClient.configurations.v1, { method, headers, body: body as any });
   }
-  private async ensureMetadataFields(): Promise<void> {
-    // Metadata columns belong to the parent Documents library, not to the repository folder.
-    // Query the Fields collection with an OData filter rather than the single-field
-    // getbyinternalnameortitle route, which can return HTTP 400 in some SharePoint tenants.
-    const fields = [
-      { name: 'KaptureDepartment', title: 'Kapture Department', type: 'Text' },
-      { name: 'KaptureSubDepartment', title: 'Kapture Sub-department', type: 'Text' },
-      { name: 'KaptureCategory', title: 'Kapture Category', type: 'Text' },
-      { name: 'KaptureDescription', title: 'Kapture Description', type: 'Note' },
-      { name: 'KaptureTags', title: 'Kapture Tags', type: 'Note' }
-    ];
-    const listApi = this.api("/web/lists/getbytitle('Documents')");
-    const listCheck = await this.request(listApi + '?$select=Id,Title', 'GET');
-    if (!listCheck.ok) {
-      const detail = await listCheck.text().catch(() => '');
-      throw new Error(`SharePoint could not open the 'Documents' library (${listCheck.status}). ${detail.substring(0, 300)}`);
-    }
-    for (const field of fields) {
-      const filter = encodeURIComponent(`InternalName eq '${field.name}'`);
-      const fieldUrl = `${listApi}/fields?$select=Id,InternalName,Title&$filter=${filter}`;
-      const check = await this.request(fieldUrl, 'GET');
-      if (!check.ok) {
-        const detail = await check.text().catch(() => '');
-        throw new Error(`Could not inspect the '${field.title}' column (${check.status}). SharePoint response: ${detail.substring(0, 350)}`);
-      }
-      const fieldData: any = await check.json();
-      if ((fieldData.value || []).some((item: any) => item.InternalName === field.name)) continue;
-
-      const xml = `<Field Type="${field.type}" DisplayName="${field.title}" Name="${field.name}" StaticName="${field.name}" Group="Kapture Knowledge" />`;
-      const add = await this.request(`${listApi}/fields/createFieldAsXml`, 'POST', JSON.stringify({
-        parameters: {
-          SchemaXml: xml,
-          Options: 0
-        }
-      }));
-      if (!add.ok) {
-        // Recheck through the same Fields collection in case another request created it.
-        const confirm = await this.request(fieldUrl, 'GET');
-        if (confirm.ok) {
-          const confirmData: any = await confirm.json();
-          if ((confirmData.value || []).some((item: any) => item.InternalName === field.name)) continue;
-        }
-        const detail = await add.text().catch(() => '');
-        if (add.status === 403) {
-          throw new Error(`The '${field.title}' column is missing and your account cannot create library columns (403). Ask a SharePoint administrator to create the five Kapture metadata columns once.`);
-        }
-        throw new Error(`SharePoint could not create the '${field.title}' column using Fields/CreateFieldAsXml (${add.status}). SharePoint response: ${detail.substring(0, 350)}`);
-      }
-    }
-  }
   private async ensureFolder(path: string): Promise<void> {
     const check = await this.request(this.api(`/web/GetFolderByServerRelativeUrl('${this.escapeOData(path)}')`), 'GET');
     if (check.ok) return;
@@ -92,29 +42,48 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     } else {
       destination += `/${this.state.department}`; await this.ensureFolder(destination);
     }
+    destination += `/${this.state.category}`; await this.ensureFolder(destination);
     return destination;
+  }
+  private async readIndex(): Promise<{ [key: string]: any }> {
+    const root = this.props.repositoryFolder.replace(/\/$/, '');
+    const url = this.api(`/web/GetFileByServerRelativeUrl('${this.escapeOData(root + '/_KaptureIndex.json')}')/$value`);
+    const response = await this.request(url, 'GET');
+    if (response.status === 404) return {};
+    if (!response.ok) return {};
+    try { return JSON.parse(await response.text()); } catch (_) { return {}; }
+  }
+  private async writeIndex(index: { [key: string]: any }): Promise<void> {
+    const root = this.props.repositoryFolder.replace(/\/$/, '');
+    const url = this.api(`/web/GetFolderByServerRelativeUrl('${this.escapeOData(root)}')/Files/add(url='_KaptureIndex.json',overwrite=true)`);
+    const response = await this.request(url, 'POST', new Blob([JSON.stringify(index)], { type: 'application/json' }));
+    if (!response.ok) throw new Error(`The document uploaded, but its searchable description/tag index could not be saved (${response.status}).`);
   }
   private async loadFiles(): Promise<void> {
     this.setState({ loading: true, error: '' });
     try {
       const root = this.props.repositoryFolder.replace(/\/$/, '');
       const escapedRoot = this.escapeOData(root);
-      await this.ensureMetadataFields();
       const folderCheck = await this.request(this.api(`/web/GetFolderByServerRelativeUrl('${escapedRoot}')?$select=ServerRelativeUrl,Name`), 'GET');
-      if (!folderCheck.ok) {
-        throw new Error(`The repository folder was not found at '${root}' (${folderCheck.status}). Confirm the folder exists inside the Documents library.`);
-      }
-      let nextUrl: string | undefined = this.api(`/web/lists/getbytitle('Documents')/items?$select=File/Name,File/ServerRelativeUrl,File/Length,Modified,KaptureDepartment,KaptureSubDepartment,KaptureCategory,KaptureTags&$expand=File&$filter=FSObjType eq 0 and startswith(FileDirRef,'${escapedRoot}')&$orderby=Modified desc&$top=500`);
+      if (!folderCheck.ok) throw new Error(`The repository folder was not found at '${root}' (${folderCheck.status}). Confirm it exists inside Documents.`);
+      let nextUrl: string | undefined = this.api(`/web/lists/getbytitle('Documents')/items?$select=FileLeafRef,FileRef,FileDirRef,File_x0020_Size,Modified,FSObjType&$filter=FSObjType eq 0 and startswith(FileDirRef,'${escapedRoot}')&$orderby=Modified desc&$top=500`);
       const allItems: any[] = [];
       while (nextUrl) {
-        const response: SPHttpClientResponse = await this.request(nextUrl, 'GET');
-        if (!response.ok) throw new Error(`Could not read files from the Kapture Knowledge Repository (${response.status}). Check the Documents library permissions and metadata columns.`);
-        const data: any = await response.json();
-        allItems.push(...(data.value || []));
+        const response = await this.request(nextUrl, 'GET');
+        if (!response.ok) throw new Error(`Could not read repository files (${response.status}). Check that you have permission to view Documents.`);
+        const data: any = await response.json(); allItems.push(...(data.value || []));
         nextUrl = data['@odata.nextLink'] || data['odata.nextLink'] || undefined;
       }
-      const rootPrefix = `${root}/`;
-      const files: IKnowledgeFile[] = allItems.map((item: any) => ({ Name: item.File.Name, ServerRelativeUrl: item.File.ServerRelativeUrl, Length: String(item.File.Length || 0), TimeLastModified: item.Modified, Department: item.KaptureDepartment || '', SubDepartment: item.KaptureSubDepartment || '', Category: item.KaptureCategory || '', Tags: item.KaptureTags || '' })).filter((file: IKnowledgeFile) => file.ServerRelativeUrl && file.ServerRelativeUrl.indexOf(rootPrefix) === 0);
+      const index = await this.readIndex();
+      const prefix = `${root}/`;
+      const files: IKnowledgeFile[] = allItems.filter((item: any) => item.FileRef && item.FileRef.indexOf(prefix) === 0 && item.FileLeafRef !== '_KaptureIndex.json').map((item: any) => {
+        const relative = String(item.FileDirRef || '').substring(prefix.length).split('/').filter(Boolean);
+        const department = relative[0] || '';
+        const subDepartment = department === 'Operations' ? (relative[1] || '') : '';
+        const category = department === 'Operations' ? (relative[2] || '') : (relative[1] || '');
+        const extra = index[item.FileRef] || {};
+        return { Name: item.FileLeafRef, ServerRelativeUrl: item.FileRef, Length: String(item.File_x0020_Size || 0), TimeLastModified: item.Modified, Department: department, SubDepartment: subDepartment, Category: category, Tags: extra.tags || '', Description: extra.description || '' } as IKnowledgeFile;
+      }).filter((f: IKnowledgeFile) => DEPARTMENTS.indexOf(f.Department || '') >= 0);
       this.setState({ files, loading: false });
     } catch (e) { this.setState({ loading: false, error: e instanceof Error ? e.message : 'Unable to load repository documents.' }); }
   }
@@ -126,24 +95,18 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     if (this.state.department === 'Operations' && !this.state.subDepartment) { this.setState({ error: 'Select an Operations sub-department.' }); return; }
     this.setState({ uploading: true, error: '', message: '' });
     try {
-      await this.ensureMetadataFields();
       const destination = await this.ensureDestination();
       const safeName = this.escapeOData(file.name);
       const uploadUrl = this.api(`/web/GetFolderByServerRelativeUrl('${this.escapeOData(destination)}')/Files/add(url='${safeName}',overwrite=true)`);
       const uploadResponse = await this.request(uploadUrl, 'POST', file);
       if (!uploadResponse.ok) throw new Error(`Upload failed (${uploadResponse.status}). Check file size, file type and SharePoint edit permissions.`);
-      const uploaded = await uploadResponse.json();
+      const uploaded: any = await uploadResponse.json();
       const fileUrl = uploaded.ServerRelativeUrl || `${destination}/${file.name}`;
-      const metadata = [
-        { FieldName: 'KaptureDepartment', FieldValue: this.state.department },
-        { FieldName: 'KaptureSubDepartment', FieldValue: this.state.subDepartment },
-        { FieldName: 'KaptureCategory', FieldValue: this.state.category },
-        { FieldName: 'KaptureDescription', FieldValue: this.state.description },
-        { FieldName: 'KaptureTags', FieldValue: this.state.tags.join('; ') }
-      ];
-      const metadataResponse = await this.request(this.api(`/web/GetFileByServerRelativeUrl('${this.escapeOData(fileUrl)}')/ListItemAllFields/ValidateUpdateListItem`), 'POST', JSON.stringify({ formValues: metadata, bNewDocumentUpdate: false }));
-      if (!metadataResponse.ok) throw new Error('The file was uploaded, but its metadata could not be saved. Please ask the SharePoint administrator to check the Kapture metadata columns.');
-      this.setState({ uploading: false, message: `Successfully uploaded ${file.name} to ${this.state.department}${this.state.subDepartment ? ` / ${this.state.subDepartment}` : ''}.`, selectedFile: undefined, description: '', tags: [] });
+      const index = await this.readIndex();
+      index[fileUrl] = { department: this.state.department, subDepartment: this.state.subDepartment, category: this.state.category, description: this.state.description, tags: this.state.tags.join('; '), updated: new Date().toISOString() };
+      let indexWarning = '';
+      try { await this.writeIndex(index); } catch (e) { indexWarning = ' The file is saved, but its description and tags index could not be updated.'; }
+      this.setState({ uploading: false, message: `Successfully uploaded ${file.name} to ${this.state.department}${this.state.subDepartment ? ` / ${this.state.subDepartment}` : ''} / ${this.state.category}.${indexWarning}`, selectedFile: undefined, description: '', tags: [] });
       const input = document.getElementById('kapture-admin-file') as HTMLInputElement; if (input) input.value = '';
       await this.loadFiles();
     } catch (e) { this.setState({ uploading: false, error: e instanceof Error ? e.message : 'Upload failed.' }); }
@@ -173,7 +136,7 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
             <label className={`${styles.field} ${styles.full}`}>Description <textarea rows={2} value={this.state.description} onChange={e => this.setState({ description: e.target.value })} placeholder="What is this resource about? (optional)" /></label>
             <div className={`${styles.field} ${styles.full}`}><span className={styles.fieldLabel}>Suggested tags <small>Select all that apply</small></span><div className={styles.tagPicker}>{TAG_OPTIONS.map(tag => <button type="button" key={tag} className={`${styles.tagOption} ${this.state.tags.indexOf(tag) >= 0 ? styles.tagSelected : ''}`} onClick={() => this.toggleTag(tag)}>{this.state.tags.indexOf(tag) >= 0 ? '✓ ' : '+ '}{tag}</button>)}</div></div></div>
           <button className={styles.primary} disabled={this.state.uploading} onClick={() => this.upload()}>{this.state.uploading ? <><span className={styles.spinner} /> Uploading resource…</> : 'Upload to knowledge repository  →'}</button>
-          <div className={styles.secureNote}><span>▣</span> Files are stored in SharePoint. Access remains governed by your organisation's permissions.</div>
+          <div className={styles.secureNote}><span>▣</span> Files are stored in SharePoint folders. Access remains governed by your organisation's permissions.</div>
         </section>
         <section className={styles.libraryCard}><div className={styles.libraryHead}><div><span className={styles.kicker}>YOUR CONTENT</span><h3>Repository documents</h3><p>Files stored in the knowledge repository.</p></div><div className={styles.count}>{this.state.files.length}<small>FILES</small></div></div>
           <div className={styles.searchBox}><span>⌕</span><input value={this.state.search} onChange={e => this.setState({ search: e.target.value })} placeholder="Search documents by name…" /></div>
@@ -181,7 +144,7 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
           <div className={styles.libraryFoot}><span className={styles.liveDot} /> Repository contents loaded</div>
         </section>
       </div>
-      <section className={styles.analytics}><div className={styles.analyticsHeading}><div><span className={styles.kicker}>REPOSITORY INSIGHTS</span><h2>Knowledge coverage</h2><p>Live counts based on documents and their saved SharePoint metadata.</p></div><div className={styles.totalMetric}><strong>{this.state.files.length}</strong><span>TOTAL DOCUMENTS</span></div></div><div className={styles.analyticsGrid}><div className={styles.analyticsCard}><h3>Documents by department</h3><p>Where organisational knowledge is currently stored</p>{this.departmentStats.map(item => <div className={styles.statRow} key={item.name}><div><span>{item.name}</span><b>{item.count}</b></div><div className={styles.barTrack}><i style={{ width: `${(item.count / maxDept) * 100}%` }} /></div></div>)}</div><div className={styles.analyticsCard}><h3>Documents by category</h3><p>Content mix across the repository</p>{this.categoryStats.map(item => <div className={styles.statRow} key={item.name}><div><span>{item.name}</span><b>{item.count}</b></div><div className={styles.barTrack}><i style={{ width: `${(item.count / maxCat) * 100}%` }} /></div></div>)}</div><div className={styles.analyticsCard}><h3>Operations capabilities</h3><p>Knowledge coverage across Operations sub-departments</p>{this.operationsStats.map(item => <div className={styles.statRow} key={item.name}><div><span>{item.name}</span><b>{item.count}</b></div><div className={styles.barTrack}><i style={{ width: `${(item.count / maxOps) * 100}%` }} /></div></div>)}</div></div><div className={styles.analyticsNote}>Counts are calculated from all repository items returned through SharePoint paging. Documents without department or category metadata are included in the total but not assigned to a breakdown.</div></section>
+      <section className={styles.analytics}><div className={styles.analyticsHeading}><div><span className={styles.kicker}>REPOSITORY INSIGHTS</span><h2>Knowledge coverage</h2><p>Live counts calculated from each document’s repository folder path.</p></div><div className={styles.totalMetric}><strong>{this.state.files.length}</strong><span>TOTAL DOCUMENTS</span></div></div><div className={styles.analyticsGrid}><div className={styles.analyticsCard}><h3>Documents by department</h3><p>Where organisational knowledge is currently stored</p>{this.departmentStats.map(item => <div className={styles.statRow} key={item.name}><div><span>{item.name}</span><b>{item.count}</b></div><div className={styles.barTrack}><i style={{ width: `${(item.count / maxDept) * 100}%` }} /></div></div>)}</div><div className={styles.analyticsCard}><h3>Documents by category</h3><p>Content mix across the repository</p>{this.categoryStats.map(item => <div className={styles.statRow} key={item.name}><div><span>{item.name}</span><b>{item.count}</b></div><div className={styles.barTrack}><i style={{ width: `${(item.count / maxCat) * 100}%` }} /></div></div>)}</div><div className={styles.analyticsCard}><h3>Operations capabilities</h3><p>Knowledge coverage across Operations sub-departments</p>{this.operationsStats.map(item => <div className={styles.statRow} key={item.name}><div><span>{item.name}</span><b>{item.count}</b></div><div className={styles.barTrack}><i style={{ width: `${(item.count / maxOps) * 100}%` }} /></div></div>)}</div></div><div className={styles.analyticsNote}>Department, sub-department and category counts are inferred from folder locations. Descriptions and selected tags are stored in a small application index file in the repository root.</div></section>
       <footer className={styles.footer}><span>INDOVANCE <b>·</b> KNOWLEDGE OPERATIONS</span><span>Built for sharing what we know.</span></footer>
     </div>;
   }
