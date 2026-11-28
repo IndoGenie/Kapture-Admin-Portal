@@ -3,7 +3,7 @@
   "solution": {
     "name": "kapture-admin-portal-client-side-solution",
     "id": "b8c4e0a7-7b3f-4a8d-9e12-6f1a2c8d9e41",
-    "version": "0.3.1.0",
+    "version": "0.4.0.0",
     "includeClientSideAssets": true,
     "skipFeatureDeployment": false,
     "isDomainIsolated": false
