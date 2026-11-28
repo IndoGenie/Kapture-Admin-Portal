@@ -16,7 +16,7 @@ interface IState {
 export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IState> {
   constructor(props: IKaptureAdminProps) {
     super(props);
-    this.state = { files: [], loading: true, uploading: false, message: '', error: '', department: '', subDepartment: '', category: '', description: '', tags: [], search: '' };
+    this.state = { files: [], loading: true, uploading: false, message: '', error: '', selectedFiles: [], failedFiles: [], uploadProgress: '', page: 1, pageSize: 8, department: '', subDepartment: '', category: '', description: '', tags: [], search: '', filterDepartment: '', filterCategory: '', manifest: {} };
   }
   public componentDidMount(): void { this.loadFiles(); }
   private api = (path: string): string => `${this.props.siteUrl}/_api${path}`;
@@ -63,7 +63,7 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     // requires POST + X-HTTP-Method: PUT and an IF-MATCH header.
     const exists = await this.request(this.api(`/web/GetFileByServerRelativeUrl('${this.escapeOData(filePath)}')?$select=Name`), 'GET');
     if (exists.ok) {
-      const update = await this.request(fileUrl, 'POST', content, { 'X-HTTP-Method': 'PUT', 'IF-MATCH': '*' });
+      const update = await this.request(fileUrl, 'POST', new Blob([content], { type: 'application/json' }), { 'X-HTTP-Method': 'PUT', 'IF-MATCH': '*' });
       if (!update.ok) throw new Error(`SharePoint could not update _KaptureIndex.json (${update.status}).`);
       return;
     }
