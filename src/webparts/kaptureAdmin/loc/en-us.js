@@ -1,1 +1,0 @@
-define([], function() { return { "PropertyPaneDescription": "Kapture Admin Portal settings" }; });
