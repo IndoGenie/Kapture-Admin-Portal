@@ -16,7 +16,7 @@ interface IState {
 export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IState> {
   constructor(props: IKaptureAdminProps) {
     super(props);
-    this.state = { files: [], loading: true, uploading: false, message: '', error: '', department: '', subDepartment: '', category: '', description: '', tags: [], search: '' };
+    this.state = { files: [], loading: true, uploading: false, message: '', error: '', selectedFiles: [], failedFiles: [], uploadProgress: '', page: 1, pageSize: 10, department: '', subDepartment: '', category: '', description: '', tags: [], search: '', filterDepartment: '', filterCategory: '', manifest: {} };
   }
   public componentDidMount(): void { this.loadFiles(); }
   private api = (path: string): string => `${this.props.siteUrl}/_api${path}`;

@@ -1,4 +1,4 @@
-# Kapture Admin Portal SPFx — v0.4.0
+# Kapture Admin Portal SPFx — v0.4.1
 
 This source release upgrades the existing Kapture Admin Portal while retaining its SharePoint repository path and folder-based storage model.
 
