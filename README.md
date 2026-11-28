@@ -1,4 +1,4 @@
-# Kapture Admin Portal — v0.3.0 (folder-based repository)
+# Kapture Admin Portal — v0.3.1 (folder-based repository)
 
 SPFx web part for the existing Kapture SharePoint site. This release removes all dependency on custom SharePoint library columns. It uses the existing `Documents` library and the existing folder `/sites/Kapture/Shared Documents/Kapture Knowledge Repository`.
 
@@ -20,6 +20,10 @@ Descriptions and selected predefined tags are stored in `_KaptureIndex.json` in 
 Default path: `/sites/Kapture/Shared Documents/Kapture Knowledge Repository`
 
 The app does not create custom columns and does not alter the Employee Wiki. Existing documents placed directly in the repository root or in unrecognised folder paths may not appear in department/category analytics until organised into the agreed folder structure.
+
+## Repository read fix
+
+This version enumerates files by recursively reading each repository folder through the SharePoint folder REST API. It does not use the previous `Documents/items` query with `startswith(FileDirRef, ...)`, which returned HTTP 400 in the target tenant.
 
 ## Build
 

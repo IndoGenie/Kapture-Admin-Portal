@@ -59,30 +59,52 @@ export default class KaptureAdmin extends React.Component<IKaptureAdminProps, IS
     const response = await this.request(url, 'POST', new Blob([JSON.stringify(index)], { type: 'application/json' }));
     if (!response.ok) throw new Error(`The document uploaded, but its searchable description/tag index could not be saved (${response.status}).`);
   }
+  private async readPagedCollection(url: string): Promise<any[]> {
+    const results: any[] = [];
+    let nextUrl: string | undefined = url;
+    while (nextUrl) {
+      const response = await this.request(nextUrl, 'GET');
+      if (!response.ok) throw new Error(`SharePoint returned ${response.status} while reading a repository folder. Confirm you have at least read access to the Kapture Knowledge Repository.`);
+      const data: any = await response.json();
+      results.push(...(data.value || []));
+      nextUrl = data['@odata.nextLink'] || data['odata.nextLink'] || undefined;
+    }
+    return results;
+  }
+  private async collectFolderFiles(folderPath: string, output: any[]): Promise<void> {
+    const escaped = this.escapeOData(folderPath);
+    const base = `/web/GetFolderByServerRelativeUrl('${escaped}')`;
+    const files = await this.readPagedCollection(this.api(`${base}/Files?$select=Name,ServerRelativeUrl,Length,TimeLastModified`));
+    files.forEach((file: any) => { if (file.Name !== '_KaptureIndex.json') output.push(file); });
+    const folders = await this.readPagedCollection(this.api(`${base}/Folders?$select=Name,ServerRelativeUrl`));
+    for (const folder of folders) {
+      if (folder.Name && folder.Name !== 'Forms' && folder.ServerRelativeUrl) {
+        await this.collectFolderFiles(folder.ServerRelativeUrl, output);
+      }
+    }
+  }
   private async loadFiles(): Promise<void> {
     this.setState({ loading: true, error: '' });
     try {
       const root = this.props.repositoryFolder.replace(/\/$/, '');
       const escapedRoot = this.escapeOData(root);
       const folderCheck = await this.request(this.api(`/web/GetFolderByServerRelativeUrl('${escapedRoot}')?$select=ServerRelativeUrl,Name`), 'GET');
-      if (!folderCheck.ok) throw new Error(`The repository folder was not found at '${root}' (${folderCheck.status}). Confirm it exists inside Documents.`);
-      let nextUrl: string | undefined = this.api(`/web/lists/getbytitle('Documents')/items?$select=FileLeafRef,FileRef,FileDirRef,File_x0020_Size,Modified,FSObjType&$filter=FSObjType eq 0 and startswith(FileDirRef,'${escapedRoot}')&$orderby=Modified desc&$top=500`);
+      if (!folderCheck.ok) throw new Error(`The repository folder was not found at '${root}' (${folderCheck.status}). Confirm it exists inside the Documents library and that you can open it.`);
+      // Enumerate the repository through the folder REST API. The previous
+      // list-items query used startswith(FileDirRef, ...) and caused HTTP 400
+      // in this tenant. Folder enumeration avoids that unsupported filter.
       const allItems: any[] = [];
-      while (nextUrl) {
-        const response = await this.request(nextUrl, 'GET');
-        if (!response.ok) throw new Error(`Could not read repository files (${response.status}). Check that you have permission to view Documents.`);
-        const data: any = await response.json(); allItems.push(...(data.value || []));
-        nextUrl = data['@odata.nextLink'] || data['odata.nextLink'] || undefined;
-      }
+      await this.collectFolderFiles(root, allItems);
       const index = await this.readIndex();
       const prefix = `${root}/`;
-      const files: IKnowledgeFile[] = allItems.filter((item: any) => item.FileRef && item.FileRef.indexOf(prefix) === 0 && item.FileLeafRef !== '_KaptureIndex.json').map((item: any) => {
-        const relative = String(item.FileDirRef || '').substring(prefix.length).split('/').filter(Boolean);
+      const files: IKnowledgeFile[] = allItems.filter((item: any) => item.ServerRelativeUrl && item.ServerRelativeUrl.indexOf(prefix) === 0).map((item: any) => {
+        const parent = String(item.ServerRelativeUrl).substring(0, String(item.ServerRelativeUrl).lastIndexOf('/'));
+        const relative = parent.substring(prefix.length).split('/').filter(Boolean);
         const department = relative[0] || '';
         const subDepartment = department === 'Operations' ? (relative[1] || '') : '';
         const category = department === 'Operations' ? (relative[2] || '') : (relative[1] || '');
-        const extra = index[item.FileRef] || {};
-        return { Name: item.FileLeafRef, ServerRelativeUrl: item.FileRef, Length: String(item.File_x0020_Size || 0), TimeLastModified: item.Modified, Department: department, SubDepartment: subDepartment, Category: category, Tags: extra.tags || '', Description: extra.description || '' } as IKnowledgeFile;
+        const extra = index[item.ServerRelativeUrl] || {};
+        return { Name: item.Name, ServerRelativeUrl: item.ServerRelativeUrl, Length: String(item.Length || 0), TimeLastModified: item.TimeLastModified || '', Department: department, SubDepartment: subDepartment, Category: category, Tags: extra.tags || '', Description: extra.description || '' } as IKnowledgeFile;
       }).filter((f: IKnowledgeFile) => DEPARTMENTS.indexOf(f.Department || '') >= 0);
       this.setState({ files, loading: false });
     } catch (e) { this.setState({ loading: false, error: e instanceof Error ? e.message : 'Unable to load repository documents.' }); }

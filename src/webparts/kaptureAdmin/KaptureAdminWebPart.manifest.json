@@ -3,7 +3,7 @@
   "id": "4f9a2d81-2d6e-4b6b-9a8f-1c3d5e7f9012",
   "alias": "KaptureAdminWebPart",
   "componentType": "WebPart",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "manifestVersion": 2,
   "requiresCustomScript": false,
   "supportsFullBleed": true,
